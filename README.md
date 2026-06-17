@@ -16,12 +16,12 @@
 docker-compose up --build
 ```
 
-Приложение будет доступно на [http://localhost:8000](http://localhost:8000).
+Поднимается два контейнера: **app** (PHP + Nginx) и **db** (MySQL 8.4). Приложение доступно на [http://localhost:8000](http://localhost:8000).
 
 При первом запуске entrypoint автоматически:
 - создаёт `.env` из `.env.example`;
 - генерирует `APP_KEY`;
-- запускает миграции;
+- запускает миграции (ждёт готовности MySQL через healthcheck);
 - засевает тестового пользователя.
 
 ### Вариант 2 — локально (PHP + Node)
@@ -37,8 +37,7 @@ npm install
 cp .env.example .env
 php artisan key:generate
 
-# 3. База данных
-touch database/database.sqlite
+# 3. База данных (MySQL должен быть запущен локально)
 php artisan migrate
 php artisan db:seed
 
@@ -61,7 +60,12 @@ php artisan serve
 |---|---|---|
 | `APP_KEY` | *(генерируется)* | Ключ шифрования Laravel |
 | `APP_URL` | `http://localhost` | Публичный URL приложения |
-| `DB_CONNECTION` | `sqlite` | Драйвер БД |
+| `DB_CONNECTION` | `mysql` | Драйвер БД |
+| `DB_HOST` | `127.0.0.1` | Хост MySQL (в Docker — `db`) |
+| `DB_PORT` | `3306` | Порт MySQL |
+| `DB_DATABASE` | `reviews` | Имя базы данных |
+| `DB_USERNAME` | `reviews` | Пользователь БД |
+| `DB_PASSWORD` | `secret` | Пароль БД |
 | `SESSION_DRIVER` | `database` | Хранилище сессий |
 | `SANCTUM_STATEFUL_DOMAINS` | `localhost,...` | Домены SPA для Sanctum |
 | `YANDEX_REVIEWS_PAGE_SIZE` | `50` | Размер страницы при запросах к API Яндекса |
