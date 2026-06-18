@@ -2,7 +2,7 @@
 
 Небольшое SPA-приложение: авторизация через Sanctum, ввод ссылки на организацию в Яндекс.Картах, парсинг отзывов и постраничный вывод.
 
-**Стек:** Laravel 12 (API) + Vue 3 SPA (Composition API) + SQLite + Laravel Sanctum.
+**Стек:** Laravel 12 (API) + Vue 3 SPA (Composition API) + MySQL + Laravel Sanctum.
 
 ---
 
