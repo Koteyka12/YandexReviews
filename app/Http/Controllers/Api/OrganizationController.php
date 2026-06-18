@@ -14,6 +14,25 @@ class OrganizationController extends Controller
 {
     public function show(Request $request): JsonResponse
     {
+        $url = $request->query('url');
+
+        if ($url) {
+            $yandexId = $this->extractYandexIdFromUrl($url);
+            if ($yandexId) {
+                $organization = $request->user()
+                    ->organizations()
+                    ->where('yandex_id', $yandexId)
+                    ->latest('updated_at')
+                    ->first();
+
+                if ($organization) {
+                    return response()->json([
+                        'organization' => $this->organizationPayload($organization),
+                    ]);
+                }
+            }
+        }
+
         $organization = $request->user()
             ->organizations()
             ->latest('updated_at')
@@ -24,7 +43,7 @@ class OrganizationController extends Controller
         ]);
     }
 
-    public function store(Request $request, YandexMapsParser $parser): JsonResponse
+    public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
             'url' => [
@@ -41,50 +60,43 @@ class OrganizationController extends Controller
             ],
         ]);
 
-        try {
-            $parsed = $parser->scrape($data['url']);
-        } catch (YandexMapsParserException $exception) {
-            return response()->json([
-                'message' => $exception->getMessage(),
-            ], 422);
+        $url = $data['url'];
+        $userId = $request->user()->id;
+
+        $yandexId = $this->extractYandexIdFromUrl($url);
+        $existingOrganization = null;
+        $useCache = false;
+
+        if ($yandexId) {
+            $existingOrganization = Organization::where('user_id', $userId)
+                ->where('yandex_id', $yandexId)
+                ->first();
+
+            if ($existingOrganization) {
+                $cacheTtlHours = config('services.yandex_maps.cache_ttl_hours', 24);
+                $cacheExpiry = now()->subHours($cacheTtlHours);
+
+                if ($existingOrganization->last_scraped_at && $existingOrganization->last_scraped_at->greaterThan($cacheExpiry)) {
+                    $useCache = true;
+                }
+            }
         }
 
-        $organization = DB::transaction(function () use ($request, $parsed): Organization {
-            $meta = $parsed['organization'];
+        \App\Jobs\ParseYandexOrganizationJob::dispatch($url, $userId);
 
-            $organization = Organization::updateOrCreate(
-                [
-                    'user_id' => $request->user()->id,
-                    'yandex_id' => $meta['yandex_id'],
-                ],
-                [
-                    'source_url' => $meta['source_url'],
-                    'canonical_url' => $meta['canonical_url'],
-                    'title' => $meta['title'],
-                    'address' => $meta['address'],
-                    'rating_value' => $meta['rating_value'],
-                    'rating_count' => $meta['rating_count'],
-                    'review_count' => $meta['review_count'],
-                    'scraped_reviews_count' => $meta['scraped_reviews_count'],
-                    'scrape_status' => 'success',
-                    'scrape_error' => null,
-                    'last_scraped_at' => now(),
-                    'raw_meta' => $parsed['raw'],
-                ],
-            );
-
-            $organization->reviews()->delete();
-
-            foreach (array_chunk($parsed['reviews'], 100) as $chunk) {
-                $organization->reviews()->createMany($chunk);
-            }
-
-            return $organization->fresh();
-        });
+        if ($useCache && $existingOrganization) {
+            return response()->json([
+                'message' => 'Используем кешированные данные, проверяем новые отзывы',
+                'organization' => $this->organizationPayload($existingOrganization),
+                'background_parsing' => true,
+            ], 200);
+        }
 
         return response()->json([
-            'organization' => $this->organizationPayload($organization),
-        ]);
+            'message' => 'Парсинг запущен',
+            'organization' => $existingOrganization ? $this->organizationPayload($existingOrganization) : null,
+            'background_parsing' => true,
+        ], 202);
     }
 
     public function reviews(Request $request, Organization $organization): JsonResponse
@@ -115,6 +127,36 @@ class OrganizationController extends Controller
         ]);
     }
 
+    public function jobStatus(Request $request): JsonResponse
+    {
+        $job = \App\Models\ParsingJob::where('user_id', $request->user()->id)
+            ->latest()
+            ->first();
+
+        if (!$job) {
+            return response()->json(['message' => 'Job not found'], 404);
+        }
+
+        $response = [
+            'status' => $job->status,
+            'scraped_reviews_count' => $job->scraped_reviews_count,
+            'has_new_reviews' => $job->has_new_reviews ?? false,
+            'previous_reviews_count' => $job->previous_reviews_count ?? 0,
+            'new_reviews_count' => $job->new_reviews_count ?? 0,
+            'started_at' => $job->started_at?->toIso8601String(),
+            'completed_at' => $job->completed_at?->toIso8601String(),
+            'error' => $job->error,
+            'message' => $this->getJobMessage($job),
+        ];
+
+        if ($job->status === 'completed' && $job->organization_id) {
+            $organization = \App\Models\Organization::find($job->organization_id);
+            $response['organization'] = $this->organizationPayload($organization);
+        }
+
+        return response()->json($response);
+    }
+
     private function organizationPayload(Organization $organization): array
     {
         return [
@@ -124,7 +166,7 @@ class OrganizationController extends Controller
             'canonical_url' => $organization->canonical_url,
             'title' => $organization->title,
             'address' => $organization->address,
-            'rating_value' => $organization->rating_value !== null ? (float) $organization->rating_value : null,
+            'rating_value' => $organization->rating_value !== null ? (float)$organization->rating_value : null,
             'rating_count' => $organization->rating_count,
             'review_count' => $organization->review_count,
             'scraped_reviews_count' => $organization->scraped_reviews_count,
@@ -132,5 +174,52 @@ class OrganizationController extends Controller
             'scrape_error' => $organization->scrape_error,
             'last_scraped_at' => optional($organization->last_scraped_at)->toIso8601String(),
         ];
+    }
+
+    private function getJobMessage(\App\Models\ParsingJob $job): string
+    {
+        switch ($job->status) {
+            case 'pending':
+                return 'Ожидание начала парсинга...';
+            case 'processing':
+                return 'Идёт парсинг отзывов...';
+            case 'completed':
+                if ($job->has_new_reviews && $job->new_reviews_count > 0) {
+                    return "Найдено {$job->new_reviews_count} новых отзывов!";
+                } elseif ($job->has_new_reviews === false) {
+                    return 'Парсинг завершён. Новых отзывов нет.';
+                } else {
+                    return 'Парсинг завершён';
+                }
+            case 'failed':
+                return $job->error ? "Ошибка: {$job->error}" : 'Ошибка парсинга';
+            default:
+                return 'Неизвестный статус';
+        }
+    }
+
+    private function extractYandexIdFromUrl(string $url): ?string
+    {
+
+        $path = parse_url($url, PHP_URL_PATH);
+        if (!$path) {
+            return null;
+        }
+
+        $parts = explode('/', trim($path, '/'));
+
+        foreach ($parts as $part) {
+            if (is_numeric($part) && strlen($part) >= 5) {
+                return $part;
+            }
+        }
+
+        foreach ($parts as $i => $part) {
+            if (is_numeric($part) && isset($parts[$i - 1]) && $parts[$i - 1] === 'org') {
+                return $part;
+            }
+        }
+
+        return null;
     }
 }

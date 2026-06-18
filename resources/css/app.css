@@ -689,3 +689,70 @@ body {
 .pag-arrow { color: var(--c-faint); }
 
 .pag-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+.parsing-status {
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-top: 16px;
+    box-shadow: var(--shadow-card);
+}
+
+.parsing-status-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.parsing-status-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.parsing-status-icon svg {
+    width: 20px;
+    height: 20px;
+    color: var(--c-primary);
+}
+
+.parsing-status-icon svg[viewBox="0 0 20 20"][fill="none"] path {
+    stroke: var(--c-danger);
+}
+
+.parsing-spinner {
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--c-border);
+    border-top-color: var(--c-primary);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+}
+
+.parsing-status-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.parsing-status-content strong {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--c-text);
+}
+
+.parsing-count {
+    font-size: 12px;
+    color: var(--c-muted);
+}
+
+.parsing-error {
+    font-size: 12px;
+    color: var(--c-danger);
+    margin-top: 2px;
+}

@@ -13,4 +13,5 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::get('/organization', [OrganizationController::class, 'show']);
     Route::post('/organization', [OrganizationController::class, 'store']);
     Route::get('/organizations/{organization}/reviews', [OrganizationController::class, 'reviews']);
+    Route::get('/parsing-job/status', [OrganizationController::class, 'jobStatus']);
 });

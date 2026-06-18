@@ -39,6 +39,7 @@ return [
         'page_size' => (int) env('YANDEX_REVIEWS_PAGE_SIZE', 50),
         'max_reviews' => (int) env('YANDEX_MAX_REVIEWS', 600),
         'timeout' => (int) env('YANDEX_HTTP_TIMEOUT', 20),
+        'cache_ttl_hours' => (int) env('YANDEX_CACHE_TTL_HOURS', 24),
     ],
 
 ];

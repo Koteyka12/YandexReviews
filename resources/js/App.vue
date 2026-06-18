@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onUnmounted, onMounted, reactive, ref } from 'vue';
 
 const user = ref(null);
 const booting = ref(true);
@@ -23,6 +23,8 @@ const settingsForm = reactive({
 });
 const error = ref('');
 const fieldErrors = ref({});
+const parsingJob = ref(null);
+const pollingInterval = ref(null);
 
 const isAuthed = computed(() => Boolean(user.value));
 
@@ -99,18 +101,94 @@ async function saveOrganization() {
     saving.value = true;
     error.value = '';
     fieldErrors.value = {};
+    parsingJob.value = null;
+    stopPolling();
+
     try {
         const r = await window.axios.post('/api/organization', { url: settingsForm.url });
-        organization.value = r.data.organization;
-        await loadReviews(1);
+
+        if (r.status === 200 || r.status === 202) {
+            if (r.data.organization) {
+                organization.value = r.data.organization;
+                await loadReviews(1);
+            }
+
+            if (r.data.background_parsing || r.status === 202) {
+                parsingJob.value = {
+                    status: 'pending',
+                    message: r.data.message || (r.status === 202 ? 'Парсинг запущен...' : 'Проверяем новые отзывы...'),
+                    scraped_reviews_count: 0
+                };
+                startPolling();
+            }
+        }
     } catch (e) {
         setValidationErrors(e);
         error.value = messageFrom(e);
     } finally { saving.value = false; }
 }
 
+async function checkParsingStatus() {
+    if (!parsingJob.value) return;
+
+    try {
+        const r = await window.axios.get('/api/parsing-job/status');
+        const job = r.data;
+
+        parsingJob.value = {
+            status: job.status,
+            message: job.message,
+            scraped_reviews_count: job.scraped_reviews_count,
+            has_new_reviews: job.has_new_reviews,
+            new_reviews_count: job.new_reviews_count,
+            error: job.error
+        };
+
+        if (job.status === 'completed') {
+
+            if (job.organization) {
+                organization.value = job.organization;
+
+                if (job.has_new_reviews && job.new_reviews_count > 0) {
+                    await loadReviews(1);
+                } else if (!reviews.value.length) {
+                    await loadReviews(1);
+                }
+            }
+
+            stopPolling();
+            setTimeout(() => {
+                parsingJob.value = null;
+            }, job.has_new_reviews && job.new_reviews_count > 0 ? 3000 : 2000);
+
+        } else if (job.status === 'failed') {
+            error.value = job.error || 'Ошибка парсинга';
+            stopPolling();
+        }
+    } catch (e) {
+        console.error('Failed to check job status:', e);
+    }
+}
+
+function startPolling() {
+    pollingInterval.value = setInterval(checkParsingStatus, 2000);
+}
+
+function stopPolling() {
+    if (pollingInterval.value) {
+        clearInterval(pollingInterval.value);
+        pollingInterval.value = null;
+    }
+}
+
+onUnmounted(() => {
+    stopPolling();
+});
+
 async function loadReviews(page) {
-    if (!organization.value) return;
+    if (!organization.value) {
+        return;
+    }
     loadingReviews.value = true;
     error.value = '';
     try {
@@ -120,6 +198,7 @@ async function loadReviews(page) {
         reviews.value = r.data.data;
         Object.assign(reviewsMeta, r.data.meta);
     } catch (e) {
+        console.error('Failed to load reviews:', e);
         error.value = messageFrom(e);
     } finally { loadingReviews.value = false; }
 }
@@ -244,6 +323,26 @@ onMounted(async () => {
                     <div v-if="error" class="alert alert--error mt-8">
                         <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.5"/><path d="M10 6.5v4M10 13.5h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
                         {{ error }}
+                    </div>
+
+                    <div v-if="parsingJob" class="parsing-status">
+                        <div class="parsing-status-header">
+                            <div class="parsing-status-icon">
+                                <div class="parsing-spinner" v-if="parsingJob.status === 'processing'"></div>
+                                <svg v-else-if="parsingJob.status === 'completed'" viewBox="0 0 20 20" fill="none"><path d="M3 10l5 5 9-9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                                <svg v-else-if="parsingJob.status === 'failed'" viewBox="0 0 20 20" fill="none"><path d="M10 6v8M10 16h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                                <svg v-else viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.5"/></svg>
+                            </div>
+                            <div class="parsing-status-content">
+                                <strong>{{ parsingJob.message }}</strong>
+                                <div v-if="parsingJob.scraped_reviews_count > 0" class="parsing-count">
+                                    Собрано отзывов: {{ parsingJob.scraped_reviews_count.toLocaleString() }}
+                                </div>
+                                <div v-if="parsingJob.error" class="parsing-error">
+                                    {{ parsingJob.error }}
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
