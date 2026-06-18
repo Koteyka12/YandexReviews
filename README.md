@@ -78,7 +78,7 @@ php artisan serve
 
 ```
 Email:    test@example.com
-Password: 123321
+Password: password
 ```
 
 ---
